@@ -1,0 +1,8 @@
+
+<VirtualHost *:80>
+    DocumentRoot "C:/xampp/htdocs/__PATH__"
+    ServerName __NAME__.localhost
+    ServerAlias __NAME__.localhost
+    ErrorLog "logs/__NAME__.localhost-error.log"
+    CustomLog "logs/__NAME__.localhost-access.log" combined
+</VirtualHost>
