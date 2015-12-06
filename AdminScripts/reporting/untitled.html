@@ -1,0 +1,198 @@
+<?php
+
+/*
+*
+*    Create and enable a virtual host for domain.com
+*    sudo php site.php create domain.com
+*
+*    Remove a virtual host for domain.com
+*    sudo php site.php remove domain.com
+*
+*    Enable an already existing virtual host for domain.com
+*    sudo php site.php enable domain.com
+*
+*    Disable an already existing virtual host for domain.com
+*    sudo php site.php disable domain.com
+*
+*/
+
+class site {
+
+    private $domain, $filename, $option, $doc_root, $nginx_path, $user;
+
+    public function __construct(){
+        // checks and variables
+        //$this->detect_sudo();
+        $this->option = $_SERVER['argv'][1];
+        $this->domain = $_SERVER['argv'][2];
+        $this->user = 'xalg';
+        $this->doc_root = '/var/www/';
+        $this->nginx_path = '/etc/nginx/sites-available/';
+        $this->filename = array_shift(explode('.', $this->domain));
+        // ok so what option do you want to do?
+        $options = array('create', 'enable', 'disable', 'remove');
+        if(in_array($this->option, $options)){
+            switch($this->option){
+                case 'create':
+                    $this->require_domain();
+                    $this->create_vhost();
+                    $this->create_doc_root();
+                    $this->enable_vhost();
+                    $this->restart_nginx();
+                    echo "##########################################\n";
+                    echo $this->domain." created.\n";
+                    break;
+                case 'enable':
+                    $this->require_domain();
+                    $this->enable_vhost();
+                    $this->restart_nginx();
+                    echo "##########################################\n";
+                    echo $this->domain." enabled.\n";
+                    break;
+                case 'disable':
+                    $this->require_domain();
+                    $this->disable_vhost();
+                    $this->restart_nginx();
+                    echo "##########################################\n";
+                    echo $this->domain." disabled.\n";
+                    break;
+                case 'remove':
+                    $this->sure();
+                    $this->require_domain();
+                    $this->disable_vhost();
+                    $this->delete_vhost();
+                    $this->delete_doc_root();
+                    $this->restart_nginx();
+                    echo "##########################################\n";
+                    echo $this->domain." removed.\n";
+                    break;
+            }
+        }else{
+            echo "Invalid option selected, pic from: ".implode(' ', $options)."\n";
+            die;
+        }
+    }
+
+    /* public function detect_sudo(){
+        $process_info = posix_getpwuid(posix_geteuid());
+        if($process_info['name'] != 'root'){
+            echo "Sorry, this needs to be run with sudo!\n";
+            die;
+        }
+    }
+    */
+    public function require_domain(){
+        if(!preg_match('/\w+\.\w+\.?\w*/', $this->domain)){
+            echo "Invalid domain name given.\n";
+            die;
+        }
+    }
+
+    public function create_vhost(){
+        if(file_exists($this->nginx_path.$this->filename)){
+            echo "The virtualhost file already exists!\n";
+            die;
+        }
+        // should probably move this to read an external file...
+        $contents = '
+        server {
+            server_name '.$this->domain.', www.' .$this->domain.' ;
+            access_log /var/log/nginx/'.$this->domain.'.log;
+            error_log /var/log/nginx/'.$this->domain.'.log;
+            root /var/www/.'.$this->doc_root.$this->filename.';
+            index index.php index.html index.htm;
+           # enforce www (exclude certain subdomains)
+           if ($host !~* ^(www|subdomain))
+           {
+              rewrite ^/(.*)$ $scheme://www.$host/$1 permanent;
+           }
+           # enforce NO www
+           #if ($host ~* ^www\.(.*)) {
+              #set $host_without_www $1;
+              #rewrite ^/(.*)$ $scheme://$host_without_www/$1 permanent;
+           #}
+           # unless the request is for a valid file, send to bootstrap
+           if (!-e $request_filename) {
+              rewrite ^(.+)$ /index.php?q=$1 last;
+           }
+           # catch all
+           error_page 404 /index.php;
+           # use fastcgi for all php files
+           location ~ \.php$ {
+              fastcgi_pass unix:/tmp/php5-fpm.sock;
+              fastcgi_index index.php;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              include fastcgi_params;
+           }
+           # deny access to nginx .htaccess files
+           location ~ /\.ht {
+                deny all;
+           }
+        }';
+
+        if(file_put_contents($this->nginx_path.$this->filename, $contents)){
+           	echo shell_exec ('sudo chmod +x'.$this->nginx_path.$this->filename);
+		 echo "Wrote virtual host file: ".$this->nginx_path.$this->filename."\n";
+        }
+    }
+
+    public function create_doc_root(){
+    	mkdir($this->doc_root.$this->filename.'/htdocs', 0777, true);
+    	mkdir('/var/logs/www/'.$this->filename, 0755,true);
+    	chown('/var/logs/www/'.$this->filename, 'root');
+    	chown($this->doc_root.$this->filename, $this->user);
+    	chown($this->doc_root.$this->filename.'/htdocs', $this->user);
+    	file_put_contents($this->doc_root.$this->filename.'/htdocs/index.php', 'Welcome to '.$this->domain."\n");
+    	chown($this->doc_root.$this->filename.'/htdocs/index.php', $this->user);
+    }
+    public function enable_vhost(){
+      echo shell_exec('sudo ln -s /etc/nginx/sites-available/'.$this->filename. ' /etc/nginx/sites-enabled/'.$this->filename);
+    }
+
+    public function disable_vhost(){
+      echo shell_exec('sudo rm -Rf /etc/nginx/sites-enabled/'.$this->filename);
+    }
+
+    public function restart_nginx(){
+      echo "Nginx Restarting...\n";
+      shell_exec('service nginx restart');
+    }
+
+    public function sure(){
+      echo "Are you really sure you want to do this? (yes or no)\n";
+      $answer = trim(strtolower(fread(STDIN, 80)));
+        while($answer != 'yes' || $answer != 'no'){
+                if($answer == 'yes'){
+                        return true;
+                }elseif($answer == 'no'){
+                        echo "Script ended.\n";
+                        die;
+                }else{
+                        echo "Please type yes or no.\n";
+                        $answer = trim(strtolower(fread(STDIN, 80)));
+                }
+        }
+    }
+
+    public function delete_vhost(){
+        if(!file_exists($this->nginx_path.$this->filename)){
+            echo "Can't delete the vhost file, it doesnt exist!\n";
+        }else{
+            if(unlink($this->nginx_path.$this->filename)){
+                echo "Virtual host file deleted!\n";
+            }else{
+                echo "Virtual host file NOT deleted!\n";
+            }
+        }
+    }
+
+    public function delete_doc_root(){
+        shell_exec('rm -fr '.$this->doc_root.$this->filename);
+        echo "Deleted all files within the web root, I hope you meant to do that...\n";
+    }
+
+}
+
+new site;
+
+?>
